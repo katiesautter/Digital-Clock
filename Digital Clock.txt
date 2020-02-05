@@ -1,0 +1,423 @@
+;This purpose of this program is to create a digital clock with different characteristics established by 
+;our TA. 
+;Source File: main.asm
+;Authors: Katherine Sautter and Josselyn Mata
+;Created: 04/11/2019
+;Modifications: none 
+
+;**************************************************************
+;*                 Important Data                             *
+;*                                                            *
+;* 224 TOFs for 4 seconds                                     *
+;* aprox. 59 TOFs for 1 sec                                   *
+;* 0.0169 sec/TOF- 16.85ms/TOF                                *
+;* period= 250 microseconds                                   *
+;*                                                            *
+;* Seconds Output pins: LSB- PAD0-PAD3                        *
+;*                      MSB- PAD4-PAD6                        *
+;* Minutes Output pins: LSB- PT0-PT3                          *
+;*                      MSB- PT4-PT6                          *
+;* Hours Output pins:   LSB- PM0-PM3                          *
+;*                      MSB- PM4-PM5                          *
+;*                                                            *
+;* Input Push Buttons:  PushButton1- PT7                      *
+;*                      PushButton2- PAD7                     *
+;*                      PushButton3- PB4                      *
+;*                                                            *
+;* LED Output pin:      LT-PTS0                               *
+;**************************************************************
+
+
+; export symbols
+            XDEF Entry                   ; export 'Entry' symbol
+            ABSENTRY Entry               ; for absolute assembly: mark this as application entry point
+           
+
+; Include derivative-specific definitions 
+		INCLUDE 'mc9s12c32.inc' 
+
+ROMStart    EQU  $4000                   ; absolute address to place my code/constant data
+
+; variable/data section
+
+
+            ORG RAMStart
+ ; Insert here your data definition.
+SecCounter: EQU 60                       ;TOFs for 1 seconds 
+Sec_counter: DS.B 1
+
+SecDisplay: EQU 0                        ;Second Counter to Display 
+Sec_Dis: DS.B 1
+SecFlag: EQU 0                           ;Flag that is incremented every time 9 seconds have passed
+Sec_Flag: DS.B 1 
+SecVar: EQU 0                            ;Variable to save the MSBs of the seconds
+Sec_Var: DS.B 1 
+
+MinDisplay: EQU 0                        ;Min Counter to Display 
+Min_Dis: DS.B 1
+MinFlag: EQU 0                           ;Flag that is incremented every time 9 minutes have passed
+Min_Flag: DS.B 1 
+MinVar: EQU 0                            ;Variable to save the MSBs of the minutes
+Min_Var: DS.B 1
+
+HrsDisplay: EQU 0                        ;Hours Counter to Display 
+Hrs_Dis: DS.B 1
+HrsFlag: EQU 0                           ;Flag that is incremented every time 9 hours have passed
+Hrs_Flag: DS.B 1 
+HrsVar: EQU 0                            ;Variable to save the MSBs of the hours
+Hrs_Var: DS.B 1
+
+PB2: EQU 180                             ;Variable to check if 3 seconds have passed for the PB1
+PB2_Check: DS.B 1
+
+LEDrate: EQU 30                          ;Variable to check if half a second has passed
+LED_rate: DS.B 1
+
+flagg: EQU 0                             ;Flag variable
+FLAG: DS.B 1
+
+blink: EQU 0                             ;Variable to count the amount of times the LEDs have blinked
+blinktimes: DS.B 1
+
+Counter     EQU  $10                     ;counter to use when debouncing
+
+; code section
+            ORG   ROMStart
+
+Entry:
+            LDS   #RAMEnd+1              ; initialize the stack pointer
+
+Initialization:
+
+            ;timer initialization
+            ldaa #%10000000
+            staa TSCR1                   ;enable timer
+            ldaa #%10000000              ;reset timer overflow flag
+            staa TFLG2
+            ldaa #%10000001
+            staa TSCR2                   ;Enable TOF interrupts and set prescaler to 2
+            
+            ;outputs initialization
+            ldaa #%01111111              ;pin 7 input, the rest output
+            staa DDRT                    ;port used for PushButton1 and controlling minutes
+            staa DDRAD                   ;port used for PushButton2 and controlling seconds
+            ldaa #%10000000
+            staa ATDDIEN
+            ldaa #$FF
+            staa DDRM                    ;port used to control hours
+            ldaa #$00
+            staa DDRB                    ;port used for PushButton3
+            ldaa #$FF
+            staa DDRS                    ;port used to turn on and off the 7 segment display
+  
+            ldaa #$FF                    ;turn the seven segment displays on
+            staa PTS  
+            ldaa #$00                    ;start clock at 0.
+            staa PTT
+            staa PTAD
+            staa PORTE
+
+            
+;initialize counters/variables
+            
+            movb #SecVar,Sec_Var         ;used to OR seconds to display
+            movb #SecFlag,Sec_Flag       ;used to keep track of seconds MSBs
+            movb #SecDisplay,Sec_Dis     ;used to keep track of seconds LSBs 
+            movb #SecCounter,Sec_counter ;initializing the counter for 1 second delay
+            
+            movb #MinVar,Min_Var         ;used to OR minutes to display
+            movb #MinFlag,Min_Flag       ;used to keep track of minutes MSBs
+            movb #MinDisplay,Min_Dis     ;used to keep track of minutes LSBs
+            
+            movb #HrsVar,Hrs_Var         ;used to OR hours to display
+            movb #HrsFlag,Hrs_Flag       ;used to keep track of hours MSBs
+            movb #HrsDisplay,Hrs_Dis     ;used to keep track of hours LSBs
+            
+            movb #flagg,FLAG             ;used to avoid reinitialization of LED_rate
+            movb #blink,blinktimes       ;used to count the amount of times it has blinked
+            
+          
+            
+MainLoop:   
+            cli
+            wai            
+            bra button
+            bra MainLoop 
+
+;button control
+button:     ldaa PTAD                    ;check if the button was pressed
+            anda #%10000000           
+            cmpa #$00
+            beq check3secs               ;if it was, check if it is pressed for 3 seconds
+            bra MainLoop
+
+check3secs: ldaa FLAG
+            cmpa #$00
+            bne wait
+            inc FLAG
+            movb #PB2,PB2_Check          ;initialize counter to check if 3 seconds have passed
+            bra wait
+            
+wait:       ldaa PB2_Check               ;check if the 3 seconds passed
+            cmpa #$00
+            beq strtblink  
+            bra button      
+            
+strtblink:  inc blinktimes               ;3 seconds have passed, count the times it has blinked
+            ldaa blinktimes
+            cmpa #%00000011
+            bhs check_but                ;if it has blinked 3 or more times, branch to check_but
+            bra contBlink
+            
+check_but:  ldaa PTAD                    ;check if the button is pressed again
+            anda #%10000000              
+            cmpa #$00
+            beq Return                   ;if it is pressed, branch to return
+            bra contBlink                ;if it is not pressed, continue blinking
+                        
+contBlink: 
+            ldaa #$00                    ;turn the seven segment display off
+            staa PTS
+            movb #LEDrate,LED_rate       ;initialize LED rate TOF counter
+LEDoff:     ldaa LED_rate
+            cmpa #$00
+            bne LEDoff                   ;wait until .5 seconds have passed
+            ldaa #$FF                    ;turn the seven segment display on
+            staa PTS
+            movb #LEDrate,LED_rate       ;initialize LED rate TOF counter
+LEDon:      ldaa LED_rate
+            cmpa #$00
+            bne LEDon                    ;wait until .5 seconds have passed
+            bra strtblink
+
+                                         
+Return:     ldaa #$FF                    ;turn the seven segment display on
+            staa PTS
+            clr blinktimes               ;clear blinktimes
+            clr FLAG                     ;clear the flag
+            lbra MainLoop                ;go back to the main loop
+
+;Interrupt Service Routine 
+TOFinterrupt:
+            dec PB2_Check
+            dec LED_rate
+            
+            ldaa blinktimes              ;check if the LEDs are blinking
+            cmpa #$00
+            bne checkpb13                 ;if they are blinking, branch to checkpb1
+            lbra Time
+
+checkpb13:  ldaa PTIT                    ;once the LEDs are blinking, check if pb1 is pressed
+            anda #%10000000           
+            cmpa #$00                    ;if it is pressed, add a minute
+            beq addminLSB
+            ldaa PORTB                   ;check if pb3 is pressed
+            anda #%00010000
+            cmpa #%00010000
+            bne  addhrsLSB               ;it it is pressed, add an hour
+            lbra Time
+            
+addhrsLSB:                               ;increment Hrs LSB
+            inc Hrs_Dis
+            ldaa Hrs_Dis
+            cmpa #%00001010              ;check if LSBs reached 10
+            beq addhrsMSB
+            oraa Hrs_Var
+            staa PTM                     ;display the hours
+            cmpa #%00100100              ;compare if the hours reached 24
+            beq clrhrs
+            
+;debouncing time            
+            LDX #$00
+            LDAA Counter
+LoopX3:     INX
+            CPX #$000F
+            BNE  LoopX3
+            DECA
+            CMPA #$00
+            BNE  LoopX3                         
+            lbra Time                      
+
+addhrsMSB:  clr Hrs_Dis                  ;clear the hours LSB
+            inc Hrs_Flag                 ;increase hours MSB
+            ldaa Hrs_Flag
+            lsla                         ;shift to put it in the right place
+            lsla
+            lsla
+            lsla
+            staa PTM                     ;display the hours
+            staa Hrs_Var 
+;debouncing time            
+            LDX #$00
+            LDAA Counter
+LoopX4:     INX
+            CPX #$000F
+            BNE  LoopX4
+            DECA
+            CMPA #$00
+            BNE  LoopX4             
+            lbra Time
+          
+clrhrs:     ldaa #$00                   ;display 00 in hours
+            staa PTM
+;debouncing time            
+            LDX #$00
+            LDAA Counter
+LoopX5:     INX
+            CPX #$000F
+            BNE  LoopX5
+            DECA
+            CMPA #$00
+            BNE  LoopX5            
+            clr Hrs_Flag                ;clear variables involved
+            clr Hrs_Var
+            clr Hrs_Dis
+            lbra Time              
+            
+addminLSB:    
+            inc Min_Dis                  ;increase a minute
+            ldaa Min_Dis
+            cmpa #%00001010              ;check if LSBs reached 10
+            beq addminMSB                ;if they did, inc minutes MSB
+            oraa Min_Var                 ;if not, OR with Min_Var and display it
+            staa PTT
+
+;debouncing time            
+            LDX #$00
+            LDAA Counter
+  LoopX:    INX
+            CPX #$000F
+            BNE  LoopX
+            DECA
+            CMPA #$00
+            BNE  LoopX             
+            bra Time
+            
+addminMSB:  clr Min_Dis                 ;clear minutes LSBs
+            inc Min_Flag                ;increase minutes MSBs
+            ldaa Min_Flag
+            cmpa #%00000110             ;check if the MSBs are 6
+            beq ClrMin                  ;if they are, branch to ClrMin
+            lsla                        ;if not, shift left to get the MSBs in the right position
+            lsla
+            lsla
+            lsla
+            staa PTT                    ;display MSBs
+            staa Min_Var                ;save value in Min_Var
+
+;debouncing time            
+            LDX #$00
+            LDAA Counter
+LoopX2:     INX
+            CPX #$000F
+            BNE  LoopX2
+            DECA
+            CMPA #$00
+            BNE  LoopX2             
+            bra Time
+            
+ClrMin:     ldaa #$00                   ;display 00 in minutes
+            staa PTT
+            clr Min_Flag                ;clear variables involved
+            clr Min_Var
+            clr Min_Dis
+            bra Time
+
+;time control section            
+Time:       ldaa Sec_counter
+            cmpa #$00
+            beq IncSecLSB
+            dec Sec_counter
+            lbra end_if
+            
+IncSecLSB:  movb #SecCounter,Sec_counter  ;re-initialize counter for 1 second
+            inc Sec_Dis
+            ldaa Sec_Dis
+            cmpa #%00001010
+            beq IncSecMSB
+            oraa Sec_Var
+            staa PTAD
+            lbra end_if
+            
+IncSecMSB:  clr Sec_Dis                   
+            inc Sec_Flag
+            ldaa Sec_Flag
+            cmpa #%00000110
+            beq ClearSec
+            lsla
+            lsla
+            lsla
+            lsla
+            staa PTAD
+            staa Sec_Var
+            lbra end_if        
+
+ClearSec:   clr Sec_Flag
+            clr Sec_Var
+            ldaa #$00
+            staa PTAD
+            inc Min_Dis
+            ldaa Min_Dis
+            cmpa #%00001010
+            beq IncMinMSB
+            oraa Min_Var
+            staa PTT
+            lbra end_if
+            
+IncMinMSB:  clr Min_Dis
+            inc Min_Flag
+            ldaa Min_Flag
+            cmpa #%00000110
+            beq ClearMin
+            lsla
+            lsla
+            lsla
+            lsla
+            staa PTT
+            staa Min_Var
+            lbra end_if 
+
+ClearMin:   clr Min_Flag
+            clr Min_Var
+            ldaa #$00
+            staa PTT
+            inc Hrs_Dis
+            ldaa Hrs_Dis
+            cmpa #%00001010
+            beq IncHrsMSB
+            oraa Hrs_Var
+            staa PTM
+            cmpa #%00011000
+            beq ClearHrs
+            lbra end_if 
+            
+IncHrsMSB:  clr Hrs_Dis
+            inc Hrs_Flag
+            ldaa Hrs_Flag
+            lsla
+            lsla
+            lsla
+            lsla
+            staa PTM
+            staa Hrs_Var
+            lbra end_if    
+            
+ClearHrs:   clr Hrs_Dis
+            clr Hrs_Flag
+            clr Hrs_Var
+            ldaa #$00
+            staa PTM
+            lbra end_if                    
+            
+end_if:     ldaa #%10000000       ;reset timer overflow flag
+            staa TFLG2
+            sei
+            rti 
+          
+;**************************************************************
+;*                 Interrupt Vectors                          *
+;**************************************************************
+            ORG   $FFFE
+            DC.W  Entry           ; Reset Vector
+            ORG $FFDE             ;Timer Overflow Interrupt Vector Address
+            DC.W TOFinterrupt
